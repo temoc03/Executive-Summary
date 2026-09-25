@@ -24,6 +24,17 @@ const { Firestore } = require('@google-cloud/firestore');
 const ROOT_FOLDER_ID = process.env.DRIVE_ROOT_FOLDER_ID;
 const PROJECT_ID = process.env.FIRESTORE_PROJECT_ID || 'evolve-dashboard-dcd20';
 
+// Filtra archivos que no son facturas reales: archivos de bloqueo temporal
+// de Excel ("~$..."), consolidados/resúmenes armados a mano, y trackers de
+// facturación -- ninguno de esos es una factura individual que alguien deba
+// "capturar".
+function isLikelyInvoiceFile(name) {
+  if (/^~\$/.test(name)) return false;
+  if (/consolidad[oa]/i.test(name)) return false;
+  if (/tracker[_ ]?facturaci[oó]n/i.test(name)) return false;
+  return true;
+}
+
 async function listFilesRecursive(drive, rootId) {
   const out = [];
   const queue = [{ id: rootId, name: null }];
@@ -40,7 +51,7 @@ async function listFilesRecursive(drive, rootId) {
       for (const f of resp.data.files || []) {
         if (f.mimeType === 'application/vnd.google-apps.folder') {
           queue.push({ id: f.id, name: f.name });
-        } else if (/\.xlsx$/i.test(f.name)) {
+        } else if (/\.xlsx$/i.test(f.name) && isLikelyInvoiceFile(f.name)) {
           out.push({ id: f.id, name: f.name, parentFolderName: parentName });
         }
       }
