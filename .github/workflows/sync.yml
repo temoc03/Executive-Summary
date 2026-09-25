@@ -1,0 +1,39 @@
+name: Sync Drive Invoices
+
+on:
+  schedule:
+    - cron: '0 13 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Autenticar con Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/216274496343/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
+          service_account: 'firebase-adminsdk-fbsvc@evolve-dashboard-dcd20.iam.gserviceaccount.com'
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar dependencias
+        working-directory: Automatizacion/drive-sync
+        run: npm install
+
+      - name: Ejecutar sync.js
+        working-directory: Automatizacion/drive-sync
+        env:
+          DRIVE_ROOT_FOLDER_ID: ${{ secrets.DRIVE_ROOT_FOLDER_ID }}
+          FIRESTORE_PROJECT_ID: evolve-dashboard-dcd20
+        run: node sync.js
