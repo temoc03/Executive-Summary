@@ -1,0 +1,14 @@
+{
+  "name": "evolve-drive-sync",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Detecta facturas nuevas en una carpeta de Google Drive y las agrega a Firestore como 'pendingInvoices' para revisión manual.",
+  "main": "sync.js",
+  "scripts": {
+    "sync": "node sync.js"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.9.0",
+    "googleapis": "^140.0.1"
+  }
+}
