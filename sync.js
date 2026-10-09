@@ -143,8 +143,10 @@ function conceptOf(inv) {
 }
 
 // ---------------- Drive ----------------
+const GSHEET = 'application/vnd.google-apps.spreadsheet';
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 async function listFilesRecursive(drive, rootId) {
-  const out = [];
+  const out = [], seen = { folders: 0, other: 0 };
   const queue = [{ id: rootId, path: [] }];
   while (queue.length) {
     const { id: fid, path } = queue.shift();
@@ -156,16 +158,22 @@ async function listFilesRecursive(drive, rootId) {
         pageSize: 1000, pageToken, supportsAllDrives: true, includeItemsFromAllDrives: true,
       });
       for (const f of resp.data.files || []) {
-        if (f.mimeType === 'application/vnd.google-apps.folder') queue.push({ id: f.id, path: path.concat(f.name) });
+        if (f.mimeType === 'application/vnd.google-apps.folder') { seen.folders++; queue.push({ id: f.id, path: path.concat(f.name) }); }
         else if (/\.xlsx$/i.test(f.name) && !/^~\$/.test(f.name)) out.push({ id: f.id, name: f.name, path });
+        // An .xlsx converted to Google Sheets on upload: read it exported back to .xlsx.
+        else if (f.mimeType === GSHEET && /^EVX-/i.test(f.name)) out.push({ id: f.id, name: f.name, path, gsheet: true });
+        else seen.other++;
       }
       pageToken = resp.data.nextPageToken;
     } while (pageToken);
   }
+  console.log(`${seen.folders} subcarpeta(s), ${out.length} factura(s)/.xlsx, ${seen.other} archivo(s) de otro tipo.`);
   return out;
 }
-async function download(drive, fileId) {
-  const resp = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
+async function download(drive, file) {
+  const resp = file.gsheet
+    ? await drive.files.export({ fileId: file.id, mimeType: XLSX_MIME }, { responseType: 'arraybuffer' })
+    : await drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' });
   return Buffer.from(resp.data);
 }
 
@@ -221,7 +229,16 @@ async function main() {
     pend.forEach((doc) => { if (!doc.data().reason) oldNotices.push(doc.ref); });
   }
 
-  console.log(`Revisando carpeta de Drive ${ROOT_FOLDER_ID}${DRY_RUN ? ' (DRY_RUN: no se escribe nada)' : ''}${bootstrap ? ' (primera vez)' : ''}...`);
+  console.log(`Revisando carpeta de Drive${DRY_RUN ? ' (DRY_RUN: no se escribe nada)' : ''}${bootstrap ? ' (primera vez)' : ''}...`);
+  // The root folder first: a clear message if it doesn't exist or isn't shared with this account.
+  try {
+    const root = await drive.files.get({ fileId: ROOT_FOLDER_ID, fields: 'id, name, mimeType', supportsAllDrives: true });
+    console.log(`Carpeta raíz: "${root.data.name}"`);
+  } catch (err) {
+    const who = (await auth.getCredentials().catch(() => ({}))).client_email || 'la cuenta de servicio';
+    throw new Error(`No se puede abrir la carpeta del secret DRIVE_ROOT_FOLDER_ID (${err.code || err.message}). ` +
+      `Revisa que el ID sea el de la carpeta Projects y que esté compartida con ${who} como Lector.`);
+  }
   const files = await listFilesRecursive(drive, ROOT_FOLDER_ID);
   const newFiles = files.filter((f) => !known.has(f.id));
   console.log(`${files.length} archivo(s) .xlsx en total, ${newFiles.length} sin revisar.`);
@@ -240,7 +257,7 @@ async function main() {
     known.add(f.id);
     if (!/^EVX-/i.test(f.name)) continue; // trackers, consolidated files...: not invoices
     let inv;
-    try { inv = parseInvoice(await readXlsxCells(await download(drive, f.id))); }
+    try { inv = parseInvoice(await readXlsxCells(await download(drive, f))); }
     catch (err) { markPending('no se pudo leer: ' + err.message); continue; }
     if (inv.isCredit) { markPending('nota de crédito: aplícala en ⚙ Editar facturas'); continue; }
     if (!inv.n) { markPending('no se pudo leer el número de factura (I4)'); continue; }
