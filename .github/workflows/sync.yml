@@ -1,0 +1,49 @@
+name: Sync Drive Invoices
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Solo mostrar lo que haría, sin escribir nada'
+        type: boolean
+        default: true
+
+concurrency:
+  group: drive-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Autenticar con Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/216274496343/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
+          service_account: 'drive-sync@evolve-dashboard-dcd20.iam.gserviceaccount.com'
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar dependencias
+        run: npm install --no-audit --no-fund
+
+      - name: Ejecutar sync.js
+        env:
+          DRIVE_ROOT_FOLDER_ID: ${{ secrets.DRIVE_ROOT_FOLDER_ID }}
+          FIRESTORE_PROJECT_ID: evolve-dashboard-dcd20
+          DASHBOARD_YEAR: '2026'
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+        run: node sync.js
